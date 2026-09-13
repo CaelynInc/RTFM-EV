@@ -156,6 +156,7 @@ export interface HealthStatus {
     max_contacts: number | null;
     max_channels: number | null;
     is_meshcomod: boolean;
+    is_openhop: boolean;
   } | null;
   radio_stats?: RadioStatsSnapshot | null;
   database_size_mb: number;
@@ -526,7 +527,116 @@ export interface AppSettings {
   brand_name: string;
   brand_hidden: boolean;
   brand_icon: string;
+  openhop_api_url: string | null;
+  openhop_api_token: string | null;
+  openhop_api_token_set?: boolean;
 }
+
+/** Availability of the opt-in OpenHop REST management surface (never carries the token). */
+export interface OpenHopStatus {
+  configured: boolean;
+  is_openhop: boolean;
+  base_url: string | null;
+}
+
+export type OpenHopAction = 'allow' | 'drop' | 'log_only';
+export type OpenHopOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'greater_than'
+  | 'less_than'
+  | 'contains'
+  | 'in'
+  | 'starts_with';
+export type OpenHopGroupKind = 'channel_hashes' | 'pubkeys';
+
+export interface OpenHopSimpleCondition {
+  field: string;
+  op: OpenHopOperator;
+  value: string;
+}
+export type OpenHopCondition =
+  | OpenHopSimpleCondition
+  | { all: OpenHopCondition[] }
+  | { any: OpenHopCondition[] }
+  | Record<string, never>;
+
+export interface OpenHopRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  if: OpenHopCondition;
+  then: { action: OpenHopAction };
+}
+export interface OpenHopPolicyEngine {
+  enabled: boolean;
+  default_action: OpenHopAction;
+  rules: OpenHopRule[];
+  objects: {
+    channel_hash_groups: Record<string, string[]>;
+    pubkey_groups: Record<string, string[]>;
+  };
+}
+export interface OpenHopGroupEntry {
+  id: string;
+  friendly_name: string;
+  value: string;
+}
+export interface OpenHopGroup {
+  id: string;
+  friendly_name: string;
+  description: string;
+  entries: OpenHopGroupEntry[];
+}
+export interface OpenHopPolicyDoc {
+  policy_file: string;
+  exists: boolean;
+  policy_engine: OpenHopPolicyEngine;
+  groups: {
+    channel_hashes: OpenHopGroup[];
+    pubkeys: OpenHopGroup[];
+  };
+}
+/** Loose envelope for OpenHop replies: validate ({valid, normalized, effective}) or generic {success}. */
+export interface OpenHopEnvelope<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+/** An installed OpenHop plugin. Fields are permissive; the pane reads only what it renders. */
+export interface OpenHopPlugin {
+  id: string;
+  name?: string;
+  version?: string;
+  enabled?: boolean;
+  state?: string;
+  running?: boolean;
+  update_available?: boolean;
+  latest_version?: string;
+  [k: string]: unknown;
+}
+
+/** A curated catalogue entry available to install. */
+export interface OpenHopCatalogueEntry {
+  id: string;
+  name?: string;
+  description?: string;
+  repository?: string;
+  category?: string;
+  version?: string;
+  installed?: boolean;
+  update_available?: boolean;
+  [k: string]: unknown;
+}
+
+/** An event from the plugin install/update progress SSE stream. */
+export type OpenHopPluginProgressEvent =
+  | { type: 'connected'; id: string }
+  | { type: 'line'; line: string }
+  | { type: 'status'; state: string; operation?: string | null; started?: number | null }
+  | { type: 'done'; state: string; error?: string | null; started?: number | null }
+  | { type: 'keepalive' };
 
 /** A located node synced from an external map/analyzer directory. */
 export interface WordlistMeta {
@@ -602,6 +712,8 @@ export interface AppSettingsUpdate {
   brand_name?: string;
   brand_hidden?: boolean;
   brand_icon?: string;
+  openhop_api_url?: string | null;
+  openhop_api_token?: string | null;
 }
 
 export interface TelemetrySchedule {
@@ -954,4 +1066,66 @@ export interface StatisticsResponse {
   region_scope_24h: RegionScopeStats;
   packets_per_hour_72h: PacketsPerHourBucket[];
   noise_floor_24h: NoiseFloorHistoryStats;
+}
+
+// --- OpenHop config pane (Surface B) ---
+export interface OpenHopConfigExport {
+  success: boolean;
+  data?: { meta?: Record<string, unknown>; config?: Record<string, unknown> };
+  error?: string;
+}
+export interface OpenHopValidateResult {
+  success: boolean;
+  data?: {
+    valid: boolean;
+    blocked_restart?: boolean;
+    errors: { path: string; message: string }[];
+    warnings: { path: string; message: string }[];
+    summary?: { error_count: number; warning_count: number };
+    message?: string;
+  };
+  error?: string;
+}
+export interface OpenHopModeResult {
+  success: boolean;
+  mode?: string;
+  persisted?: boolean;
+  error?: string;
+}
+export interface OpenHopRadioResult {
+  success: boolean;
+  data?: {
+    applied?: string[];
+    live_update?: boolean;
+    restart_required?: boolean;
+    message?: string;
+  };
+  error?: string;
+}
+export interface OpenHopImportResult {
+  success: boolean;
+  message?: string;
+  sections_updated?: string[];
+  saved?: boolean;
+  restart_required?: boolean;
+  error?: string;
+}
+export interface OpenHopRestartResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+export interface OpenHopHardwareOption {
+  key: string;
+  name: string;
+  description?: string;
+  config?: Record<string, unknown>;
+}
+export interface OpenHopRadioPreset {
+  title: string;
+  description?: string;
+  frequency?: string;
+  spreading_factor?: string;
+  bandwidth?: string;
+  coding_rate?: string;
 }

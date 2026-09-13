@@ -75,6 +75,45 @@ class TestUpdateSettings:
         assert result.backup_destination_path == ""
 
     @pytest.mark.asyncio
+    async def test_persists_openhop_api_config(self, test_db):
+        """The PATCH path must forward openhop url/token to storage."""
+        result = await update_settings(
+            AppSettingsUpdate(
+                openhop_api_url="http://127.0.0.1:8010",
+                openhop_api_token="tok123",
+            )
+        )
+        assert result.openhop_api_url == "http://127.0.0.1:8010"
+        assert result.openhop_api_token == "tok123"
+
+        fresh = await AppSettingsRepository.get()
+        assert fresh.openhop_api_url == "http://127.0.0.1:8010"
+        assert fresh.openhop_api_token == "tok123"
+
+    @pytest.mark.asyncio
+    async def test_openhop_empty_token_kept_url_cleared(self, test_db):
+        await update_settings(AppSettingsUpdate(openhop_api_url="http://x", openhop_api_token="t"))
+        result = await update_settings(
+            AppSettingsUpdate(openhop_api_url="  ", openhop_api_token="")
+        )
+        # URL still clears; the token is write-only and kept when blank.
+        assert result.openhop_api_url == ""
+        assert result.openhop_api_token == "t"
+
+    @pytest.mark.asyncio
+    async def test_openhop_token_updates_when_nonempty(self, test_db):
+        await update_settings(AppSettingsUpdate(openhop_api_token="old"))
+        result = await update_settings(AppSettingsUpdate(openhop_api_token="new"))
+        assert result.openhop_api_token == "new"
+
+    @pytest.mark.asyncio
+    async def test_openhop_token_kept_when_only_url_patched(self, test_db):
+        await update_settings(AppSettingsUpdate(openhop_api_token="keepme"))
+        result = await update_settings(AppSettingsUpdate(openhop_api_url="http://y"))
+        assert result.openhop_api_token == "keepme"
+        assert result.openhop_api_url == "http://y"
+
+    @pytest.mark.asyncio
     async def test_show_mention_ticker_defaults_enabled(self, test_db):
         result = await update_settings(AppSettingsUpdate())
         assert result.show_mention_ticker is True
@@ -709,3 +748,24 @@ class TestAdvertRetentionSetting:
             AppSettingsUpdate(advert_retention_days=0)
         with pytest.raises(ValidationError):
             AppSettingsUpdate(advert_retention_days=366)
+
+
+class TestOpenHopTokenMasking:
+    @pytest.mark.asyncio
+    async def test_settings_serialization_masks_token_but_keeps_attribute(self, test_db):
+        await update_settings(
+            AppSettingsUpdate(openhop_api_url="http://n:8000", openhop_api_token="secret-tok")
+        )
+        settings = await AppSettingsRepository.get()
+        # Attribute stays real for internal use.
+        assert settings.openhop_api_token == "secret-tok"
+        dumped = settings.model_dump()
+        # Serialised output never carries the secret.
+        assert dumped["openhop_api_token"] is None
+        assert dumped["openhop_api_token_set"] is True
+        assert "secret-tok" not in settings.model_dump_json()
+
+    @pytest.mark.asyncio
+    async def test_token_set_flag_false_when_unset(self, test_db):
+        settings = await AppSettingsRepository.get()
+        assert settings.model_dump()["openhop_api_token_set"] is False

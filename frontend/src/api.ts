@@ -23,6 +23,21 @@ import type {
   MeshcomodConfig,
   MeshcomodConfigUpdate,
   Message,
+  OpenHopStatus,
+  OpenHopEnvelope,
+  OpenHopGroupKind,
+  OpenHopPolicyDoc,
+  OpenHopPolicyEngine,
+  OpenHopPlugin,
+  OpenHopCatalogueEntry,
+  OpenHopConfigExport,
+  OpenHopValidateResult,
+  OpenHopModeResult,
+  OpenHopRadioResult,
+  OpenHopImportResult,
+  OpenHopRestartResult,
+  OpenHopHardwareOption,
+  OpenHopRadioPreset,
   MessagesAroundResponse,
   RawPacket,
   RadioAdvertMode,
@@ -471,6 +486,126 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),
+
+  // OpenHop management (Surface B, opt-in; only meaningful when is_openhop)
+  getOpenHopStatus: () => fetchJson<OpenHopStatus>('/openhop/status'),
+  getOpenHopPolicy: () => fetchJson<OpenHopEnvelope<OpenHopPolicyDoc>>('/openhop/policy'),
+  validateOpenHopPolicy: (policy: OpenHopPolicyEngine) =>
+    fetchJson<OpenHopEnvelope<{ valid: boolean; normalized?: unknown; effective?: unknown }>>(
+      '/openhop/policy/validate',
+      { method: 'POST', body: JSON.stringify({ policy }) }
+    ),
+  updateOpenHopPolicy: (policy: OpenHopPolicyEngine) =>
+    fetchJson<OpenHopEnvelope>('/openhop/policy', {
+      method: 'POST',
+      body: JSON.stringify({ policy }),
+    }),
+  createOpenHopGroup: (
+    kind: OpenHopGroupKind,
+    group_id: string,
+    friendly_name = '',
+    description = ''
+  ) =>
+    fetchJson<OpenHopEnvelope>('/openhop/policy/groups', {
+      method: 'POST',
+      body: JSON.stringify({ kind, group_id, friendly_name, description }),
+    }),
+  deleteOpenHopGroup: (kind: OpenHopGroupKind, group_id: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/policy/groups', {
+      method: 'DELETE',
+      body: JSON.stringify({ kind, group_id }),
+    }),
+  addOpenHopGroupEntry: (kind: OpenHopGroupKind, group_id: string, value: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/policy/groups/entries', {
+      method: 'POST',
+      body: JSON.stringify({ kind, group_id, value }),
+    }),
+  deleteOpenHopGroupEntry: (kind: OpenHopGroupKind, group_id: string, value: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/policy/groups/entries', {
+      method: 'DELETE',
+      body: JSON.stringify({ kind, group_id, value }),
+    }),
+
+  // OpenHop plugins (Surface B; only meaningful when is_openhop AND configured)
+  listOpenHopPlugins: () =>
+    fetchJson<OpenHopEnvelope<never> & { plugins: OpenHopPlugin[] }>('/openhop/plugins'),
+  // OpenHop's plugin endpoints use a FLAT envelope ({success, <fields>...}), unlike
+  // the policy endpoints which nest under {data}. Read fields at the top level.
+  getOpenHopPluginStatus: (id: string) =>
+    fetchJson<OpenHopEnvelope<never> & OpenHopPlugin>(
+      `/openhop/plugins/status?id=${encodeURIComponent(id)}`
+    ),
+  getOpenHopPluginCatalogue: (refresh = false) =>
+    fetchJson<OpenHopEnvelope<never> & { plugins: OpenHopCatalogueEntry[] }>(
+      `/openhop/plugins/catalogue${refresh ? '?refresh=true' : ''}`
+    ),
+  getOpenHopPluginLogs: (id: string, tail = 200) =>
+    fetchJson<OpenHopEnvelope<never> & { lines?: string[]; log?: string; tail?: number }>(
+      `/openhop/plugins/logs?id=${encodeURIComponent(id)}&tail=${tail}`
+    ),
+  getOpenHopPluginConfig: (id: string) =>
+    fetchJson<OpenHopEnvelope<never> & { config?: Record<string, unknown> }>(
+      `/openhop/plugins/settings?id=${encodeURIComponent(id)}`
+    ),
+  checkOpenHopPluginUpdate: (id: string, refresh = false) =>
+    fetchJson<OpenHopEnvelope<never> & { updateAvailable?: boolean; latestVersion?: string }>(
+      `/openhop/plugins/updates?id=${encodeURIComponent(id)}${refresh ? '&refresh=true' : ''}`
+    ),
+  openHopPluginLifecycle: (verb: 'enable' | 'disable' | 'start' | 'stop' | 'restart', id: string) =>
+    fetchJson<OpenHopEnvelope>(`/openhop/plugins/${verb}`, {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    }),
+  installOpenHopCataloguePlugin: (id: string, version?: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/plugins/catalogue_install', {
+      method: 'POST',
+      body: JSON.stringify(version ? { id, version } : { id }),
+    }),
+  updateOpenHopPlugin: (id: string, version?: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/plugins/update', {
+      method: 'POST',
+      body: JSON.stringify(version ? { id, version } : { id }),
+    }),
+  setOpenHopPluginConfig: (id: string, config: Record<string, unknown>, restart = false) =>
+    fetchJson<OpenHopEnvelope>('/openhop/plugins/settings', {
+      method: 'POST',
+      body: JSON.stringify({ id, config, restart }),
+    }),
+  uninstallOpenHopPlugin: (id: string, delete_data = false) =>
+    fetchJson<OpenHopEnvelope>('/openhop/plugins/uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ id, delete_data }),
+    }),
+  openHopPluginProgressUrl: (id: string, since = 0, fresh = true) =>
+    `./api/openhop/plugins/progress?id=${encodeURIComponent(id)}&since=${since}&fresh=${fresh}`,
+
+  // OpenHop config (Surface B; only meaningful when is_openhop AND configured)
+  getOpenHopConfigExport: (includeSecrets = false) =>
+    fetchJson<OpenHopConfigExport>(
+      `/openhop/config/export${includeSecrets ? '?include_secrets=true' : ''}`
+    ),
+  validateOpenHopConfig: () => fetchJson<OpenHopValidateResult>('/openhop/config/validate'),
+  getOpenHopHardwareOptions: () =>
+    fetchJson<{ hardware: OpenHopHardwareOption[] }>('/openhop/config/hardware_options'),
+  getOpenHopPresets: () =>
+    fetchJson<{ presets: OpenHopRadioPreset[]; source?: string }>('/openhop/config/presets'),
+  setOpenHopMode: (mode: string) =>
+    fetchJson<OpenHopModeResult>('/openhop/config/mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+  updateOpenHopRadio: (params: Record<string, number | string>) =>
+    fetchJson<OpenHopRadioResult>('/openhop/config/radio', {
+      method: 'POST',
+      body: JSON.stringify({ params }),
+    }),
+  importOpenHopConfig: (config: Record<string, unknown>, restartAfter = false) =>
+    fetchJson<OpenHopImportResult>('/openhop/config/import', {
+      method: 'POST',
+      body: JSON.stringify({ config, restart_after: restartAfter }),
+    }),
+  restartOpenHopService: () =>
+    fetchJson<OpenHopRestartResult>('/openhop/config/restart', { method: 'POST' }),
 
   // Block lists
   toggleBlockedKey: (key: string) =>
