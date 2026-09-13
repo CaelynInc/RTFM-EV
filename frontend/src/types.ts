@@ -508,6 +508,8 @@ export interface AppSettings {
   external_map_enabled: boolean;
   external_map_sync_url: string;
   external_map_sync_interval_hours: number;
+  backup_to_path_enabled: boolean;
+  backup_destination_path: string;
   brand_name: string;
   brand_hidden: boolean;
   brand_icon: string;
@@ -582,6 +584,8 @@ export interface AppSettingsUpdate {
   external_map_enabled?: boolean;
   external_map_sync_url?: string;
   external_map_sync_interval_hours?: number;
+  backup_to_path_enabled?: boolean;
+  backup_destination_path?: string;
   brand_name?: string;
   brand_hidden?: boolean;
   brand_icon?: string;

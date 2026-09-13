@@ -57,6 +57,7 @@ class AppSettingsRepository:
                    wordlist_sync_url, analyzer_sites,
                    external_map_enabled, external_map_sync_url,
                    external_map_sync_interval_hours,
+                   backup_to_path_enabled, backup_destination_path,
                    brand_name, brand_hidden, brand_icon
             FROM app_settings WHERE id = 1
             """
@@ -229,6 +230,16 @@ class AppSettingsRepository:
         except (KeyError, TypeError):
             external_map_sync_interval_hours = 0
 
+        # Server-side backup settings (migration _084 adds the columns).
+        try:
+            backup_to_path_enabled = bool(row["backup_to_path_enabled"])
+        except (KeyError, TypeError):
+            backup_to_path_enabled = False
+        try:
+            backup_destination_path = row["backup_destination_path"] or ""
+        except (KeyError, TypeError):
+            backup_destination_path = ""
+
         # Parse advert_retention_days (migration adds the column with default=30)
         try:
             raw_retention = row["advert_retention_days"]
@@ -280,6 +291,8 @@ class AppSettingsRepository:
             external_map_enabled=external_map_enabled,
             external_map_sync_url=external_map_sync_url,
             external_map_sync_interval_hours=external_map_sync_interval_hours,
+            backup_to_path_enabled=backup_to_path_enabled,
+            backup_destination_path=backup_destination_path,
             brand_name=brand_name,
             brand_hidden=brand_hidden,
             brand_icon=brand_icon,
@@ -318,6 +331,8 @@ class AppSettingsRepository:
         external_map_enabled: bool | None = None,
         external_map_sync_url: str | None = None,
         external_map_sync_interval_hours: int | None = None,
+        backup_to_path_enabled: bool | None = None,
+        backup_destination_path: str | None = None,
         brand_name: str | None = None,
         brand_hidden: bool | None = None,
         brand_icon: str | None = None,
@@ -446,6 +461,14 @@ class AppSettingsRepository:
             updates.append("external_map_sync_interval_hours = ?")
             params.append(external_map_sync_interval_hours)
 
+        if backup_to_path_enabled is not None:
+            updates.append("backup_to_path_enabled = ?")
+            params.append(1 if backup_to_path_enabled else 0)
+
+        if backup_destination_path is not None:
+            updates.append("backup_destination_path = ?")
+            params.append(backup_destination_path)
+
         if brand_name is not None:
             updates.append("brand_name = ?")
             params.append(brand_name)
@@ -503,6 +526,8 @@ class AppSettingsRepository:
         external_map_enabled: bool | None = None,
         external_map_sync_url: str | None = None,
         external_map_sync_interval_hours: int | None = None,
+        backup_to_path_enabled: bool | None = None,
+        backup_destination_path: str | None = None,
         brand_name: str | None = None,
         brand_hidden: bool | None = None,
         brand_icon: str | None = None,
@@ -540,6 +565,8 @@ class AppSettingsRepository:
                 external_map_enabled=external_map_enabled,
                 external_map_sync_url=external_map_sync_url,
                 external_map_sync_interval_hours=external_map_sync_interval_hours,
+                backup_to_path_enabled=backup_to_path_enabled,
+                backup_destination_path=backup_destination_path,
                 brand_name=brand_name,
                 brand_hidden=brand_hidden,
                 brand_icon=brand_icon,

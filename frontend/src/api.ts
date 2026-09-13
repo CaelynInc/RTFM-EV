@@ -118,6 +118,12 @@ interface DecryptResult {
   message: string;
 }
 
+interface BackupSaveResult {
+  path: string;
+  size_bytes: number;
+  timestamp: string;
+}
+
 export const api = {
   // Health
   getHealth: () => fetchJson<HealthStatus>('/health'),
@@ -405,6 +411,13 @@ export const api = {
           purge_linked_raw_packets: options.purgeLinkedRawPackets,
         }),
       }),
+    }),
+
+  // Backup
+  downloadBackupUrl: () => `${API_BASE}/backup/download`,
+  saveBackup: () =>
+    fetchJson<BackupSaveResult>('/backup/save', {
+      method: 'POST',
     }),
 
   // Read State
