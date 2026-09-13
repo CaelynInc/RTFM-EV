@@ -60,6 +60,7 @@ async def test_db():
         contacts,
         external_map,
         link_signal,
+        mention_sound,
         messages,
         noise_floor,
         raw_packets,
@@ -92,6 +93,7 @@ async def test_db():
         external_map,
         wordlists,
         request_traffic,
+        mention_sound,
         raw_feed_stats,
     ]
     originals = [(mod, mod.db) for mod in submodules]
