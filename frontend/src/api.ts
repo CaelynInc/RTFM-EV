@@ -2,6 +2,7 @@ import type {
   AdvertLinkEdge,
   AppSettings,
   AppSettingsUpdate,
+  UrlPreview,
   ExternalMapNode,
   ExternalMapStatus,
   BulkCreateHashtagChannelsResult,
@@ -444,6 +445,10 @@ export const api = {
     });
     return fetchJson<ExternalMapNode[]>(`/external-map/nodes?${qs.toString()}`, { signal });
   },
+
+  // Chat link preview (unfurl)
+  unfurl: (url: string, signal?: AbortSignal) =>
+    fetchJson<UrlPreview>(`/unfurl?url=${encodeURIComponent(url)}`, { signal }),
 
   // App Settings
   getSettings: () => fetchJson<AppSettings>('/settings'),
