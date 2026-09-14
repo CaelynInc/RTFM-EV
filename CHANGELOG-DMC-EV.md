@@ -11,6 +11,35 @@ This changelog covers work done in the **RTFM-EV** fork
 Entries are grouped by area and reference the non-merge commit that introduced
 the change. Upstream development is on hold; the fork is the active repository.
 
+## Update 2026-09-14 (Map: neon nodes, line/arc thickness)
+
+### Map
+- New **Neon nodes** toggle in the map Display panel. When on, nodes render as a
+  deck.gl halo + bright core (the "neon" look), replacing the flat GL circles;
+  the existing packet glow supplies the per-node activity pulse. The flat circle
+  layer is hidden while neon is on and the node labels stay on top either way.
+  Off by default, per-device (`frontend/src/map/layers/neonNodesLayer.ts`,
+  wired through `MapView`; the flat layer gains `setCirclesVisible`).
+- New **Packet arc width** and **Link line width** sliders (0.5-4x) in the same
+  panel. Arc width multiplies the deck.gl packet-arc width; link width scales the
+  liveness and advert link line widths. Both persist per-device
+  (`packetDeckOverlay.setArcWidthScale`, `linksLayer`/`advertLinksLayer`
+  `setWidthScale`). New strings `map_neon_nodes_label`, `map_arc_width_label`,
+  `map_link_width_label` (EN/NL/DE).
+
+## Update 2026-09-14 (Map node labels fixed on vector basemaps)
+
+### Map
+- Node name / ID-tag labels now render on the default Nova (and other
+  OpenFreeMap vector) basemaps. The label layer requested a multi-font stack
+  (`Noto Sans Regular,Open Sans Regular,sans-serif`); MapLibre asks the basemap
+  glyph server for that whole comma-joined stack as one key, and the servers we
+  use (OpenFreeMap for vector, openmaptiles for raster) only serve pre-generated
+  single fonts, so the request 404'd and the labels silently vanished. The layer
+  now requests the single font `Noto Sans Regular`, which both servers provide
+  (`frontend/src/map/layers/nodesLayer.ts`, exported as `NODE_LABEL_FONT` with a
+  regression test).
+
 ## Update 2026-09-14 (CRT phosphor themes + universal screen effects)
 
 ### Chat / UI
