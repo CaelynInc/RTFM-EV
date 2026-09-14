@@ -190,5 +190,99 @@ class OpenHopClient:
     async def restart_service(self) -> dict[str, Any]:
         return await self._post("/api/restart_service", {})
 
+    # --- Update (OTA) ---------------------------------------------------
+    async def update_status(self) -> dict[str, Any]:
+        return await self._get("/api/update/status")
+
+    async def update_check(self, force: bool = False) -> dict[str, Any]:
+        return await self._post("/api/update/check", {"force": force})
+
+    async def update_install(self, force: bool = False) -> dict[str, Any]:
+        return await self._post("/api/update/install", {"force": force})
+
+    async def update_channels(self) -> dict[str, Any]:
+        return await self._get("/api/update/channels")
+
+    async def update_set_channel(self, channel: str) -> dict[str, Any]:
+        return await self._post("/api/update/set_channel", {"channel": channel})
+
+    async def update_changelog(
+        self, channel: str | None = None, max_commits: int = 40
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max": max_commits}
+        if channel:
+            params["channel"] = channel
+        return await self._get_q("/api/update/changelog", params)
+
+    # --- CAD calibration ------------------------------------------------
+    async def cad_start(self, samples: int = 8, delay: int = 100) -> dict[str, Any]:
+        return await self._post("/api/cad_calibration_start", {"samples": samples, "delay": delay})
+
+    async def cad_stop(self) -> dict[str, Any]:
+        return await self._post("/api/cad_calibration_stop", {})
+
+    async def cad_manual_check(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self._post("/api/cad_manual_check", params)
+
+    async def cad_save(self, peak: int, min_val: int, cad_symbol_num: int = 2) -> dict[str, Any]:
+        return await self._post(
+            "/api/save_cad_settings",
+            {"peak": peak, "min_val": min_val, "cad_symbol_num": cad_symbol_num},
+        )
+
+    # --- System / hardware ----------------------------------------------
+    async def hardware_stats(self) -> dict[str, Any]:
+        return await self._get("/api/hardware_stats")
+
+    async def hardware_processes(self) -> dict[str, Any]:
+        return await self._get("/api/hardware_processes")
+
+    async def node_stats(self) -> dict[str, Any]:
+        return await self._get("/api/stats")
+
+    # --- Analytics (read-only) ------------------------------------------
+    async def packet_stats(self, hours: int = 24) -> dict[str, Any]:
+        return await self._get_q("/api/packet_stats", {"hours": hours})
+
+    async def packet_type_stats(self, hours: int = 24) -> dict[str, Any]:
+        return await self._get_q("/api/packet_type_stats", {"hours": hours})
+
+    async def noise_floor_stats(self, hours: int = 24) -> dict[str, Any]:
+        return await self._get_q("/api/noise_floor_stats", {"hours": hours})
+
+    # --- Transport keys + neighbor scopes -------------------------------
+    async def transport_keys(self) -> dict[str, Any]:
+        return await self._get("/api/transport_keys")
+
+    async def create_transport_key(self, name: str) -> dict[str, Any]:
+        return await self._post("/api/transport_keys", {"name": name})
+
+    async def transport_key(self, key_id: str) -> dict[str, Any]:
+        return await self._get_q("/api/transport_key", {"key_id": key_id})
+
+    async def delete_transport_key(self, key_id: str) -> dict[str, Any]:
+        r = await self._client.request("DELETE", "/api/transport_key", params={"key_id": key_id})
+        r.raise_for_status()
+        return r.json()
+
+    async def neighbor_scopes(self) -> dict[str, Any]:
+        return await self._get("/api/neighbor_scopes")
+
+    async def query_neighbor_scopes(self, pubkey: str) -> dict[str, Any]:
+        return await self._post("/api/query_neighbor_scopes", {"pubkey": pubkey})
+
+    # --- MQTT config ----------------------------------------------------
+    async def mqtt_status(self) -> dict[str, Any]:
+        return await self._get("/api/mqtt_status")
+
+    async def broker_presets(self) -> dict[str, Any]:
+        return await self._get("/api/broker_presets")
+
+    async def update_mqtt_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        return await self._post("/api/update_mqtt_config", config)
+
+    async def publish_neighbors(self) -> dict[str, Any]:
+        return await self._post("/api/publish_neighbors", {})
+
     async def aclose(self) -> None:
         await self._client.aclose()

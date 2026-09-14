@@ -420,3 +420,310 @@ class TestOpenHopConfig:
         fake.update_radio_config.assert_awaited_once_with({"tx_power": 22})
         fake.config_import.assert_awaited_once_with({"radio": {}}, restart_after=False)
         fake.restart_service.assert_awaited_once_with()
+
+
+class TestOpenHopUpdate:
+    @pytest.mark.asyncio
+    async def test_update_status_409_when_not_openhop(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import update_status
+
+        with pytest.raises(HTTPException) as exc:
+            await update_status()
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_update_routes_delegate_when_configured(self, test_db, monkeypatch):
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+        from app.routers.openhop import (
+            UpdateActionBody,
+            UpdateChannelBody,
+            update_channels,
+            update_check,
+            update_install,
+            update_set_channel,
+            update_status,
+        )
+
+        fake = AsyncMock()
+        fake.update_status = AsyncMock(return_value={"success": True, "state": "idle"})
+        fake.update_check = AsyncMock(return_value={"success": True, "state": "checking"})
+        fake.update_install = AsyncMock(return_value={"success": True, "state": "installing"})
+        fake.update_channels = AsyncMock(
+            return_value={"success": True, "channels": ["main"], "current_channel": "main"}
+        )
+        fake.update_set_channel = AsyncMock(return_value={"success": True, "channel": "dev"})
+        fake.aclose = AsyncMock()
+        with patch("app.routers.openhop.OpenHopClient", return_value=fake):
+            assert (await update_status())["state"] == "idle"
+            assert (await update_check(UpdateActionBody(force=True)))["state"] == "checking"
+            assert (await update_install(UpdateActionBody()))["state"] == "installing"
+            assert (await update_channels())["channels"] == ["main"]
+            assert (await update_set_channel(UpdateChannelBody(channel="dev")))["channel"] == "dev"
+        fake.update_check.assert_awaited_once_with(force=True)
+        fake.update_install.assert_awaited_once_with(force=False)
+        fake.update_set_channel.assert_awaited_once_with("dev")
+
+    @pytest.mark.asyncio
+    async def test_update_progress_409_unconfigured(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import update_progress
+
+        with pytest.raises(HTTPException) as exc:
+            await update_progress()
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_update_progress_relays_stream(self, test_db, monkeypatch):
+        import httpx
+
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+
+        chunks = [
+            b'data: {"type":"line","line":"pip install"}\n\n',
+            b'data: {"type":"done","state":"complete"}\n\n',
+        ]
+
+        async def _agen():
+            for c in chunks:
+                yield c
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/update/progress"
+            assert request.headers.get("X-API-Key") == "tok"
+            return httpx.Response(
+                200, content=_agen(), headers={"Content-Type": "text/event-stream"}
+            )
+
+        import app.routers.openhop as mod
+
+        monkeypatch.setattr(mod, "_stream_transport", httpx.MockTransport(handler), raising=False)
+        from app.routers.openhop import update_progress
+
+        resp = await update_progress()
+        body = b""
+        async for part in resp.body_iterator:
+            body += part if isinstance(part, bytes) else part.encode()
+        assert b'"type":"line"' in body
+        assert b'"type":"done"' in body
+
+
+class TestOpenHopCad:
+    @pytest.mark.asyncio
+    async def test_cad_manual_check_409_when_not_openhop(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import CadManualCheckBody, cad_manual_check
+
+        with pytest.raises(HTTPException) as exc:
+            await cad_manual_check(CadManualCheckBody())
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_cad_routes_delegate_when_configured(self, test_db, monkeypatch):
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+        from app.routers.openhop import (
+            CadManualCheckBody,
+            CadSaveBody,
+            CadStartBody,
+            cad_manual_check,
+            cad_save,
+            cad_start,
+            cad_stop,
+        )
+
+        fake = AsyncMock()
+        fake.cad_start = AsyncMock(return_value={"success": True})
+        fake.cad_stop = AsyncMock(return_value={"success": True})
+        fake.cad_manual_check = AsyncMock(
+            return_value={"success": True, "data": {"attempts": 4, "detected": True}}
+        )
+        fake.cad_save = AsyncMock(return_value={"success": True})
+        fake.aclose = AsyncMock()
+        with patch("app.routers.openhop.OpenHopClient", return_value=fake):
+            assert (await cad_start(CadStartBody(samples=16, delay=50)))["success"]
+            assert (await cad_stop())["success"]
+            r = await cad_manual_check(CadManualCheckBody(samples=4, apply_live=True))
+            assert r["data"]["attempts"] == 4
+            assert (await cad_save(CadSaveBody(peak=127, min_val=64)))["success"]
+        fake.cad_start.assert_awaited_once_with(samples=16, delay=50)
+        # Only non-None fields forwarded to the node.
+        fake.cad_manual_check.assert_awaited_once_with({"samples": 4, "apply_live": True})
+        fake.cad_save.assert_awaited_once_with(peak=127, min_val=64, cad_symbol_num=2)
+
+    @pytest.mark.asyncio
+    async def test_cad_stream_relays(self, test_db, monkeypatch):
+        import httpx
+
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+
+        async def _agen():
+            yield b'data: {"type":"sample","rssi":-120}\n\n'
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/cad_calibration_stream"
+            assert request.headers.get("X-API-Key") == "tok"
+            return httpx.Response(
+                200, content=_agen(), headers={"Content-Type": "text/event-stream"}
+            )
+
+        import app.routers.openhop as mod
+
+        monkeypatch.setattr(mod, "_stream_transport", httpx.MockTransport(handler), raising=False)
+        from app.routers.openhop import cad_stream
+
+        resp = await cad_stream()
+        body = b""
+        async for part in resp.body_iterator:
+            body += part if isinstance(part, bytes) else part.encode()
+        assert b'"type":"sample"' in body
+
+
+class TestOpenHopSystem:
+    @pytest.mark.asyncio
+    async def test_hardware_409_when_not_openhop(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import system_hardware
+
+        with pytest.raises(HTTPException) as exc:
+            await system_hardware()
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_system_and_analytics_routes_delegate(self, test_db, monkeypatch):
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+        from app.routers.openhop import (
+            analytics_noise_floor_stats,
+            analytics_packet_stats,
+            analytics_packet_type_stats,
+            system_hardware,
+            system_processes,
+            system_site_info,
+            system_stats,
+        )
+
+        fake = AsyncMock()
+        fake.hardware_stats = AsyncMock(return_value={"success": True, "data": {"cpu": {}}})
+        fake.hardware_processes = AsyncMock(return_value={"success": True, "data": {}})
+        fake.node_stats = AsyncMock(return_value={"local_hash": "0xe4"})
+        fake.get_site_info = AsyncMock(return_value={"success": True, "site_name": ""})
+        fake.packet_stats = AsyncMock(return_value={"success": True, "data": {}})
+        fake.packet_type_stats = AsyncMock(return_value={"success": True, "data": {}})
+        fake.noise_floor_stats = AsyncMock(return_value={"success": True, "data": {}})
+        fake.aclose = AsyncMock()
+        with patch("app.routers.openhop.OpenHopClient", return_value=fake):
+            assert "data" in await system_hardware()
+            assert "data" in await system_processes()
+            assert (await system_stats())["local_hash"] == "0xe4"
+            assert (await system_site_info())["success"] is True
+            assert "data" in await analytics_packet_stats(hours=12)
+            assert "data" in await analytics_packet_type_stats(hours=12)
+            assert "data" in await analytics_noise_floor_stats(hours=12)
+        fake.packet_stats.assert_awaited_once_with(hours=12)
+
+
+class TestOpenHopTransport:
+    @pytest.mark.asyncio
+    async def test_transport_keys_409_when_not_openhop(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import transport_keys_list
+
+        with pytest.raises(HTTPException) as exc:
+            await transport_keys_list()
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_transport_and_scope_routes_delegate(self, test_db, monkeypatch):
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+        from app.routers.openhop import (
+            QueryScopeBody,
+            TransportKeyCreate,
+            scopes_neighbors,
+            scopes_query,
+            transport_key_create,
+            transport_key_delete,
+            transport_key_get,
+            transport_keys_list,
+        )
+
+        fake = AsyncMock()
+        fake.transport_keys = AsyncMock(return_value={"success": True, "data": []})
+        fake.create_transport_key = AsyncMock(return_value={"success": True})
+        fake.transport_key = AsyncMock(return_value={"success": True, "data": {"id": "k1"}})
+        fake.delete_transport_key = AsyncMock(return_value={"success": True})
+        fake.neighbor_scopes = AsyncMock(
+            return_value={"success": True, "served": {"scopes": "*"}, "data": {}}
+        )
+        fake.query_neighbor_scopes = AsyncMock(
+            return_value={"success": True, "data": {"status": "timeout"}}
+        )
+        fake.aclose = AsyncMock()
+        with patch("app.routers.openhop.OpenHopClient", return_value=fake):
+            assert (await transport_keys_list())["data"] == []
+            assert (await transport_key_create(TransportKeyCreate(name="home")))["success"]
+            assert (await transport_key_get(key_id="k1"))["data"]["id"] == "k1"
+            assert (await transport_key_delete(key_id="k1"))["success"]
+            assert (await scopes_neighbors())["served"]["scopes"] == "*"
+            r = await scopes_query(QueryScopeBody(pubkey="ab" * 32))
+            assert r["data"]["status"] == "timeout"
+        fake.create_transport_key.assert_awaited_once_with("home")
+        fake.delete_transport_key.assert_awaited_once_with("k1")
+        fake.query_neighbor_scopes.assert_awaited_once_with("ab" * 32)
+
+
+class TestOpenHopMqtt:
+    @pytest.mark.asyncio
+    async def test_mqtt_status_409_when_not_openhop(self, test_db, monkeypatch):
+        _set_model(monkeypatch, "Heltec V3")
+        from app.routers.openhop import mqtt_status
+
+        with pytest.raises(HTTPException) as exc:
+            await mqtt_status()
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_mqtt_routes_delegate_and_filter_body(self, test_db, monkeypatch):
+        _set_model(monkeypatch, OPENHOP_MODEL)
+        await AppSettingsRepository.update(
+            openhop_api_url="http://node:8000", openhop_api_token="tok"
+        )
+        from app.routers.openhop import (
+            MqttConfigBody,
+            mqtt_config,
+            mqtt_presets,
+            mqtt_publish_neighbors,
+            mqtt_status,
+        )
+
+        fake = AsyncMock()
+        fake.mqtt_status = AsyncMock(
+            return_value={"success": True, "data": {"handler_active": True}}
+        )
+        fake.broker_presets = AsyncMock(return_value={"success": True, "data": []})
+        fake.update_mqtt_config = AsyncMock(return_value={"success": True})
+        fake.publish_neighbors = AsyncMock(return_value={"success": True})
+        fake.aclose = AsyncMock()
+        with patch("app.routers.openhop.OpenHopClient", return_value=fake):
+            assert (await mqtt_status())["data"]["handler_active"] is True
+            assert (await mqtt_presets())["data"] == []
+            assert (await mqtt_config(MqttConfigBody(owner="Callsign")))["success"]
+            assert (await mqtt_publish_neighbors())["success"]
+        # Only the fields the caller set are forwarded (None-valued fields dropped).
+        fake.update_mqtt_config.assert_awaited_once_with({"owner": "Callsign"})

@@ -1194,3 +1194,141 @@ export interface OpenHopRadioPreset {
   bandwidth?: string;
   coding_rate?: string;
 }
+
+// OpenHop OTA update (Surface B). Status is a FLAT envelope (fields at top level).
+export interface OpenHopUpdateStatus {
+  success: boolean;
+  current_version?: string;
+  latest_version?: string | null;
+  has_update?: boolean;
+  channel?: string;
+  last_checked?: string | null;
+  state?: 'idle' | 'checking' | 'installing' | 'complete' | 'error';
+  error?: string | null;
+  rate_limit_until?: string | null;
+  message?: string;
+}
+export interface OpenHopUpdateChannels {
+  success: boolean;
+  channels: string[];
+  current_channel: string;
+}
+export interface OpenHopChangelogCommit {
+  sha: string;
+  short_sha: string;
+  title: string;
+  body: string;
+  author: string;
+  date: string;
+  url: string;
+}
+export interface OpenHopChangelog {
+  success: boolean;
+  channel: string;
+  installed: string;
+  latest: string;
+  commits: OpenHopChangelogCommit[];
+}
+/** An event from the OTA install-progress SSE stream. */
+export type OpenHopUpdateEvent =
+  | { type: 'connected'; message: string }
+  | { type: 'line'; line: string }
+  | { type: 'status'; state: string }
+  | { type: 'done'; state: string; error?: string | null }
+  | { type: 'keepalive' };
+
+// OpenHop CAD calibration (Surface B). Meaningful metrics require real RF hardware.
+export interface OpenHopCadResult {
+  success: boolean;
+  data?: {
+    det_peak?: number;
+    det_min?: number;
+    cad_symbol_num?: number;
+    cad_timeout_ms?: number;
+    apply_live?: boolean;
+    samples?: number;
+    attempts?: number;
+    detections?: number;
+    non_detections?: number;
+    timeouts?: number;
+    errors?: number;
+    cad_done_count?: number;
+    detection_rate?: number;
+    detected?: boolean;
+  };
+  error?: string;
+}
+export interface OpenHopCadManualCheckParams {
+  samples?: number;
+  det_peak?: number;
+  det_min?: number;
+  cad_symbol_num?: number;
+  cad_timeout_ms?: number;
+  apply_live?: boolean;
+}
+
+// OpenHop system/hardware (Surface B). psutil-nested; every field optional.
+export interface OpenHopHardwareData {
+  cpu?: {
+    usage_percent?: number;
+    count?: number;
+    frequency?: number;
+    load_avg?: { '1min'?: number; '5min'?: number; '15min'?: number };
+  };
+  memory?: { total?: number; available?: number; used?: number; usage_percent?: number };
+  disk?: { total?: number; used?: number; free?: number; usage_percent?: number };
+  system?: { uptime?: number; boot_time?: number; os?: string; kernel?: string };
+  [k: string]: unknown;
+}
+export interface OpenHopHardwareStats {
+  success: boolean;
+  data?: OpenHopHardwareData;
+  error?: string;
+}
+export interface OpenHopAnalyticsResult {
+  success: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+// OpenHop transport keys + neighbor scopes (Surface B).
+export interface OpenHopTransportKey {
+  id?: string | number;
+  name?: string;
+  flood_policy?: string;
+  [k: string]: unknown;
+}
+export interface OpenHopTransportKeys {
+  success: boolean;
+  data?: OpenHopTransportKey[] | Record<string, OpenHopTransportKey>;
+  count?: number;
+  error?: string;
+}
+export interface OpenHopNeighborScopeRecord {
+  scopes?: string;
+  status?: string;
+  queried_at?: number | null;
+  responded_at?: number | null;
+}
+export interface OpenHopNeighborScopes {
+  success: boolean;
+  count?: number;
+  served?: { scopes?: string };
+  data?: Record<string, OpenHopNeighborScopeRecord>;
+  error?: string;
+}
+
+// OpenHop MQTT config (Surface B). update forwards only the fields the user sets.
+export interface OpenHopMqttConfigBody {
+  iata_code?: string;
+  status_interval?: number;
+  owner?: string;
+  email?: string;
+  neighbors?: Record<string, unknown>;
+  brokers?: Record<string, unknown>[];
+}
+export interface OpenHopMqttStatus {
+  success: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+}

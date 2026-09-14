@@ -39,6 +39,17 @@ import type {
   OpenHopRestartResult,
   OpenHopHardwareOption,
   OpenHopRadioPreset,
+  OpenHopUpdateStatus,
+  OpenHopUpdateChannels,
+  OpenHopChangelog,
+  OpenHopCadResult,
+  OpenHopCadManualCheckParams,
+  OpenHopHardwareStats,
+  OpenHopAnalyticsResult,
+  OpenHopTransportKeys,
+  OpenHopNeighborScopes,
+  OpenHopMqttStatus,
+  OpenHopMqttConfigBody,
   MessagesAroundResponse,
   RawPacket,
   RadioAdvertMode,
@@ -635,6 +646,91 @@ export const api = {
     }),
   restartOpenHopService: () =>
     fetchJson<OpenHopRestartResult>('/openhop/config/restart', { method: 'POST' }),
+
+  // OpenHop OTA update (Surface B; only meaningful when is_openhop AND configured)
+  getOpenHopUpdateStatus: () => fetchJson<OpenHopUpdateStatus>('/openhop/update/status'),
+  openHopUpdateCheck: (force = false) =>
+    fetchJson<OpenHopUpdateStatus>('/openhop/update/check', {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }),
+  openHopUpdateInstall: (force = false) =>
+    fetchJson<OpenHopUpdateStatus>('/openhop/update/install', {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }),
+  getOpenHopUpdateChannels: () => fetchJson<OpenHopUpdateChannels>('/openhop/update/channels'),
+  openHopUpdateSetChannel: (channel: string) =>
+    fetchJson<OpenHopUpdateStatus>('/openhop/update/set_channel', {
+      method: 'POST',
+      body: JSON.stringify({ channel }),
+    }),
+  getOpenHopUpdateChangelog: (channel?: string, max = 40) =>
+    fetchJson<OpenHopChangelog>(
+      `/openhop/update/changelog?max=${max}${channel ? `&channel=${encodeURIComponent(channel)}` : ''}`
+    ),
+  openHopUpdateProgressUrl: () => `./api/openhop/update/progress`,
+
+  // OpenHop CAD calibration (Surface B; real metrics need RF hardware)
+  openHopCadStart: (samples = 8, delay = 100) =>
+    fetchJson<OpenHopEnvelope>('/openhop/cad/start', {
+      method: 'POST',
+      body: JSON.stringify({ samples, delay }),
+    }),
+  openHopCadStop: () => fetchJson<OpenHopEnvelope>('/openhop/cad/stop', { method: 'POST' }),
+  openHopCadManualCheck: (params: OpenHopCadManualCheckParams) =>
+    fetchJson<OpenHopCadResult>('/openhop/cad/manual_check', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+  openHopCadSave: (peak: number, min_val: number, cad_symbol_num = 2) =>
+    fetchJson<OpenHopEnvelope>('/openhop/cad/save', {
+      method: 'POST',
+      body: JSON.stringify({ peak, min_val, cad_symbol_num }),
+    }),
+  openHopCadStreamUrl: () => `./api/openhop/cad/stream`,
+
+  // OpenHop system / hardware + read-only analytics (Surface B)
+  getOpenHopHardware: () => fetchJson<OpenHopHardwareStats>('/openhop/system/hardware'),
+  getOpenHopProcesses: () => fetchJson<OpenHopAnalyticsResult>('/openhop/system/processes'),
+  getOpenHopNodeStats: () => fetchJson<Record<string, unknown>>('/openhop/system/stats'),
+  getOpenHopSiteInfo: () =>
+    fetchJson<OpenHopEnvelope & { site_name?: string }>('/openhop/system/site_info'),
+  getOpenHopPacketStats: (hours = 24) =>
+    fetchJson<OpenHopAnalyticsResult>(`/openhop/analytics/packet_stats?hours=${hours}`),
+  getOpenHopPacketTypeStats: (hours = 24) =>
+    fetchJson<OpenHopAnalyticsResult>(`/openhop/analytics/packet_type_stats?hours=${hours}`),
+  getOpenHopNoiseFloorStats: (hours = 24) =>
+    fetchJson<OpenHopAnalyticsResult>(`/openhop/analytics/noise_floor_stats?hours=${hours}`),
+
+  // OpenHop transport keys + neighbor scopes (Surface B)
+  getOpenHopTransportKeys: () => fetchJson<OpenHopTransportKeys>('/openhop/transport/keys'),
+  openHopCreateTransportKey: (name: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/transport/keys', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  openHopDeleteTransportKey: (keyId: string) =>
+    fetchJson<OpenHopEnvelope>(`/openhop/transport/key?key_id=${encodeURIComponent(keyId)}`, {
+      method: 'DELETE',
+    }),
+  getOpenHopNeighborScopes: () => fetchJson<OpenHopNeighborScopes>('/openhop/scopes/neighbors'),
+  openHopQueryNeighborScopes: (pubkey: string) =>
+    fetchJson<OpenHopEnvelope>('/openhop/scopes/query', {
+      method: 'POST',
+      body: JSON.stringify({ pubkey }),
+    }),
+
+  // OpenHop MQTT config (Surface B)
+  getOpenHopMqttStatus: () => fetchJson<OpenHopMqttStatus>('/openhop/mqtt/status'),
+  getOpenHopMqttPresets: () => fetchJson<OpenHopMqttStatus>('/openhop/mqtt/presets'),
+  openHopUpdateMqttConfig: (body: OpenHopMqttConfigBody) =>
+    fetchJson<OpenHopEnvelope>('/openhop/mqtt/config', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  openHopPublishNeighbors: () =>
+    fetchJson<OpenHopEnvelope>('/openhop/mqtt/publish_neighbors', { method: 'POST' }),
 
   // Block lists
   toggleBlockedKey: (key: string) =>

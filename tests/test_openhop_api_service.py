@@ -170,3 +170,152 @@ async def test_config_family_methods_use_api_key_and_paths():
     await client.aclose()
     assert all(v == "tok" for v in seen.values())
     assert ("GET", "/api/config_export") in seen
+
+
+@pytest.mark.asyncio
+async def test_update_methods_use_api_key_and_paths():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[(request.method, request.url.path)] = request.headers.get("X-API-Key")
+        p, m = request.url.path, request.method
+        if p == "/api/update/status" and m == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "state": "idle",
+                    "current_version": "1.0.6.dev10",
+                    "channel": "main",
+                },
+            )
+        if p == "/api/update/check" and m == "POST":
+            return httpx.Response(200, json={"success": True, "state": "checking"})
+        if p == "/api/update/install" and m == "POST":
+            return httpx.Response(200, json={"success": True, "state": "installing"})
+        if p == "/api/update/channels" and m == "GET":
+            return httpx.Response(
+                200,
+                json={"success": True, "channels": ["main", "dev"], "current_channel": "main"},
+            )
+        if p == "/api/update/set_channel" and m == "POST":
+            return httpx.Response(200, json={"success": True, "channel": "dev"})
+        if p == "/api/update/changelog" and m == "GET":
+            return httpx.Response(200, json={"success": True, "commits": []})
+        return httpx.Response(404, json={"success": False})
+
+    client = OpenHopClient("http://n:8000", token="tok", transport=httpx.MockTransport(handler))
+    assert (await client.update_status())["state"] == "idle"
+    assert (await client.update_check(force=True))["state"] == "checking"
+    assert (await client.update_install(force=False))["state"] == "installing"
+    assert (await client.update_channels())["channels"] == ["main", "dev"]
+    assert (await client.update_set_channel("dev"))["channel"] == "dev"
+    assert (await client.update_changelog(channel="main", max_commits=10))["success"] is True
+    await client.aclose()
+    assert all(v == "tok" for v in seen.values())
+
+
+@pytest.mark.asyncio
+async def test_cad_methods():
+    def handler(request: httpx.Request) -> httpx.Response:
+        p, m = request.url.path, request.method
+        if p == "/api/cad_calibration_start" and m == "POST":
+            return httpx.Response(200, json={"success": True})
+        if p == "/api/cad_calibration_stop" and m == "POST":
+            return httpx.Response(200, json={"success": True})
+        if p == "/api/cad_manual_check" and m == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"detected": False, "detection_rate": 0.0, "attempts": 1},
+                },
+            )
+        if p == "/api/save_cad_settings" and m == "POST":
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404, json={"success": False})
+
+    c = OpenHopClient("http://n:8000", token="tok", transport=httpx.MockTransport(handler))
+    assert (await c.cad_start(samples=8, delay=100))["success"]
+    assert (await c.cad_stop())["success"]
+    assert (await c.cad_manual_check({"samples": 1}))["data"]["attempts"] == 1
+    assert (await c.cad_save(peak=127, min_val=64, cad_symbol_num=2))["success"]
+    await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_system_and_analytics_methods():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"success": True, "data": {"ok": request.url.path}})
+
+    c = OpenHopClient("http://n:8000", token="tok", transport=httpx.MockTransport(handler))
+    assert (await c.hardware_stats())["data"]["ok"] == "/api/hardware_stats"
+    assert (await c.hardware_processes())["data"]["ok"] == "/api/hardware_processes"
+    assert (await c.node_stats())["data"]["ok"] == "/api/stats"
+    assert (await c.packet_stats(hours=24))["data"]["ok"] == "/api/packet_stats"
+    assert (await c.packet_type_stats(hours=24))["data"]["ok"] == "/api/packet_type_stats"
+    assert (await c.noise_floor_stats(hours=24))["data"]["ok"] == "/api/noise_floor_stats"
+    await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transport_and_scope_methods():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[(request.method, request.url.path)] = dict(request.url.params)
+        p, m = request.url.path, request.method
+        if p == "/api/transport_keys" and m == "GET":
+            return httpx.Response(200, json={"success": True, "data": [], "count": 0})
+        if p == "/api/transport_keys" and m == "POST":
+            return httpx.Response(200, json={"success": True})
+        if p == "/api/transport_key" and m == "GET":
+            return httpx.Response(200, json={"success": True, "data": {"id": "k1"}})
+        if p == "/api/transport_key" and m == "DELETE":
+            return httpx.Response(200, json={"success": True})
+        if p == "/api/neighbor_scopes" and m == "GET":
+            return httpx.Response(
+                200, json={"success": True, "count": 0, "data": {}, "served": {"scopes": "*"}}
+            )
+        if p == "/api/query_neighbor_scopes" and m == "POST":
+            return httpx.Response(200, json={"success": True, "data": {"status": "timeout"}})
+        return httpx.Response(404, json={"success": False})
+
+    c = OpenHopClient("http://n:8000", token="tok", transport=httpx.MockTransport(handler))
+    assert (await c.transport_keys())["data"] == []
+    assert (await c.create_transport_key("home"))["success"]
+    assert (await c.transport_key("k1"))["data"]["id"] == "k1"
+    assert (await c.delete_transport_key("k1"))["success"]
+    assert (await c.neighbor_scopes())["served"]["scopes"] == "*"
+    assert (await c.query_neighbor_scopes("ab" * 32))["data"]["status"] == "timeout"
+    await c.aclose()
+    assert seen[("GET", "/api/transport_key")] == {"key_id": "k1"}
+    assert seen[("DELETE", "/api/transport_key")] == {"key_id": "k1"}
+
+
+@pytest.mark.asyncio
+async def test_mqtt_methods():
+    body_seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        p, m = request.url.path, request.method
+        if p == "/api/mqtt_status" and m == "GET":
+            return httpx.Response(200, json={"success": True, "data": {"handler_active": False}})
+        if p == "/api/broker_presets" and m == "GET":
+            return httpx.Response(200, json={"success": True, "data": []})
+        if p == "/api/update_mqtt_config" and m == "POST":
+            body_seen.update(_json.loads(request.content))
+            return httpx.Response(200, json={"success": True})
+        if p == "/api/publish_neighbors" and m == "POST":
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404, json={"success": False})
+
+    c = OpenHopClient("http://n:8000", token="tok", transport=httpx.MockTransport(handler))
+    assert (await c.mqtt_status())["data"]["handler_active"] is False
+    assert (await c.broker_presets())["data"] == []
+    assert (await c.update_mqtt_config({"owner": "Callsign"}))["success"]
+    assert (await c.publish_neighbors())["success"]
+    await c.aclose()
+    assert body_seen == {"owner": "Callsign"}

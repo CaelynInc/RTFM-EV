@@ -327,7 +327,12 @@ async def plugin_progress(id: str, since: int = 0, fresh: bool = False) -> Strea
                         if chunk:
                             yield chunk
             except httpx.HTTPError as exc:
-                payload = json.dumps({"type": "done", "state": "error", "error": str(exc)})
+                # Log the transport detail server-side; never leak the exception
+                # text to the SSE client (CodeQL: information exposure).
+                logger.warning("OpenHop SSE stream error: %s", exc)
+                payload = json.dumps(
+                    {"type": "done", "state": "error", "error": "OpenHop stream error"}
+                )
                 yield f"data: {payload}\n\n".encode()
 
     return StreamingResponse(
@@ -395,3 +400,286 @@ async def config_import(body: ConfigImportRequest) -> dict[str, Any]:
 @router.post("/config/restart")
 async def config_restart() -> dict[str, Any]:
     return await _relay(lambda c: c.restart_service())
+
+
+# ---------------------------------------------------------------------------
+# Update (OTA). JSON routes use _relay_upstream so a node-side error status
+# (e.g. 409 "already installing") reaches the client intact. install performs a
+# real pip upgrade + service restart on the node; the frontend confirm-gates it.
+# ---------------------------------------------------------------------------
+class UpdateActionBody(BaseModel):
+    force: bool = False
+
+
+class UpdateChannelBody(BaseModel):
+    channel: str
+
+
+@router.get("/update/status")
+async def update_status() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_status())
+
+
+@router.post("/update/check")
+async def update_check(body: UpdateActionBody) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_check(force=body.force))
+
+
+@router.post("/update/install")
+async def update_install(body: UpdateActionBody) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_install(force=body.force))
+
+
+@router.get("/update/channels")
+async def update_channels() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_channels())
+
+
+@router.post("/update/set_channel")
+async def update_set_channel(body: UpdateChannelBody) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_set_channel(body.channel))
+
+
+@router.get("/update/changelog")
+async def update_changelog(channel: str | None = None, max: int = 40) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.update_changelog(channel=channel, max_commits=max))
+
+
+@router.get("/update/progress")
+async def update_progress() -> StreamingResponse:
+    """Re-stream OpenHop's OTA install-progress SSE. Stateless passthrough, fail-closed."""
+    settings = await AppSettingsRepository.get()
+    if not (_detect_openhop() and settings.openhop_api_url and settings.openhop_api_token):
+        raise HTTPException(status_code=409, detail="OpenHop management not configured")
+    base = settings.openhop_api_url.rstrip("/")
+    token = settings.openhop_api_token
+
+    async def stream():
+        # No read timeout: progress can be idle between lines. Connect timeout stays bounded.
+        timeout = httpx.Timeout(8.0, read=None)
+        async with httpx.AsyncClient(
+            base_url=base,
+            headers={"X-API-Key": token},
+            timeout=timeout,
+            transport=_stream_transport,
+        ) as client:
+            try:
+                async with client.stream("GET", "/api/update/progress") as resp:
+                    async for chunk in resp.aiter_raw():
+                        if chunk:
+                            yield chunk
+            except httpx.HTTPError as exc:
+                # Log the transport detail server-side; never leak the exception
+                # text to the SSE client (CodeQL: information exposure).
+                logger.warning("OpenHop SSE stream error: %s", exc)
+                payload = json.dumps(
+                    {"type": "done", "state": "error", "error": "OpenHop stream error"}
+                )
+                yield f"data: {payload}\n\n".encode()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# CAD calibration. Manual-check body forwards only the fields the caller sets.
+# ---------------------------------------------------------------------------
+class CadStartBody(BaseModel):
+    samples: int = 8
+    delay: int = 100
+
+
+class CadManualCheckBody(BaseModel):
+    samples: int | None = None
+    det_peak: int | None = None
+    det_min: int | None = None
+    cad_symbol_num: int | None = None
+    cad_timeout_ms: int | None = None
+    apply_live: bool | None = None
+
+
+class CadSaveBody(BaseModel):
+    peak: int
+    min_val: int
+    cad_symbol_num: int = 2
+
+
+@router.post("/cad/start")
+async def cad_start(body: CadStartBody) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.cad_start(samples=body.samples, delay=body.delay))
+
+
+@router.post("/cad/stop")
+async def cad_stop() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.cad_stop())
+
+
+@router.post("/cad/manual_check")
+async def cad_manual_check(body: CadManualCheckBody) -> dict[str, Any]:
+    params = {k: v for k, v in body.model_dump().items() if v is not None}
+    return await _relay_upstream(lambda c: c.cad_manual_check(params))
+
+
+@router.post("/cad/save")
+async def cad_save(body: CadSaveBody) -> dict[str, Any]:
+    return await _relay_upstream(
+        lambda c: c.cad_save(
+            peak=body.peak, min_val=body.min_val, cad_symbol_num=body.cad_symbol_num
+        )
+    )
+
+
+@router.get("/cad/stream")
+async def cad_stream() -> StreamingResponse:
+    """Re-stream OpenHop's CAD calibration SSE. Stateless passthrough, fail-closed."""
+    settings = await AppSettingsRepository.get()
+    if not (_detect_openhop() and settings.openhop_api_url and settings.openhop_api_token):
+        raise HTTPException(status_code=409, detail="OpenHop management not configured")
+    base = settings.openhop_api_url.rstrip("/")
+    token = settings.openhop_api_token
+
+    async def stream():
+        timeout = httpx.Timeout(8.0, read=None)
+        async with httpx.AsyncClient(
+            base_url=base,
+            headers={"X-API-Key": token},
+            timeout=timeout,
+            transport=_stream_transport,
+        ) as client:
+            try:
+                async with client.stream("GET", "/api/cad_calibration_stream") as resp:
+                    async for chunk in resp.aiter_raw():
+                        if chunk:
+                            yield chunk
+            except httpx.HTTPError as exc:
+                # Log the transport detail server-side; never leak the exception
+                # text to the SSE client (CodeQL: information exposure).
+                logger.warning("OpenHop SSE stream error: %s", exc)
+                payload = json.dumps(
+                    {"type": "done", "state": "error", "error": "OpenHop stream error"}
+                )
+                yield f"data: {payload}\n\n".encode()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# System / hardware + read-only analytics. hardware_stats is psutil-nested;
+# /stats is an unwrapped object. The frontend reads both defensively.
+# ---------------------------------------------------------------------------
+@router.get("/system/hardware")
+async def system_hardware() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.hardware_stats())
+
+
+@router.get("/system/processes")
+async def system_processes() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.hardware_processes())
+
+
+@router.get("/system/stats")
+async def system_stats() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.node_stats())
+
+
+@router.get("/system/site_info")
+async def system_site_info() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.get_site_info())
+
+
+@router.get("/analytics/packet_stats")
+async def analytics_packet_stats(hours: int = 24) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.packet_stats(hours=hours))
+
+
+@router.get("/analytics/packet_type_stats")
+async def analytics_packet_type_stats(hours: int = 24) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.packet_type_stats(hours=hours))
+
+
+@router.get("/analytics/noise_floor_stats")
+async def analytics_noise_floor_stats(hours: int = 24) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.noise_floor_stats(hours=hours))
+
+
+# ---------------------------------------------------------------------------
+# Transport keys + neighbor scopes. Key create/delete are outward changes;
+# the frontend confirm-gates delete.
+# ---------------------------------------------------------------------------
+class TransportKeyCreate(BaseModel):
+    name: str
+
+
+class QueryScopeBody(BaseModel):
+    pubkey: str
+
+
+@router.get("/transport/keys")
+async def transport_keys_list() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.transport_keys())
+
+
+@router.post("/transport/keys")
+async def transport_key_create(body: TransportKeyCreate) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.create_transport_key(body.name))
+
+
+@router.get("/transport/key")
+async def transport_key_get(key_id: str) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.transport_key(key_id))
+
+
+@router.delete("/transport/key")
+async def transport_key_delete(key_id: str) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.delete_transport_key(key_id))
+
+
+@router.get("/scopes/neighbors")
+async def scopes_neighbors() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.neighbor_scopes())
+
+
+@router.post("/scopes/query")
+async def scopes_query(body: QueryScopeBody) -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.query_neighbor_scopes(body.pubkey))
+
+
+# ---------------------------------------------------------------------------
+# MQTT config. update_mqtt_config forwards only the fields the caller sets;
+# publish_neighbors triggers an outward RF cycle (frontend confirm-gates it).
+# ---------------------------------------------------------------------------
+class MqttConfigBody(BaseModel):
+    iata_code: str | None = None
+    status_interval: int | None = None
+    owner: str | None = None
+    email: str | None = None
+    neighbors: dict[str, Any] | None = None
+    brokers: list[dict[str, Any]] | None = None
+
+
+@router.get("/mqtt/status")
+async def mqtt_status() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.mqtt_status())
+
+
+@router.get("/mqtt/presets")
+async def mqtt_presets() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.broker_presets())
+
+
+@router.post("/mqtt/config")
+async def mqtt_config(body: MqttConfigBody) -> dict[str, Any]:
+    payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    return await _relay_upstream(lambda c: c.update_mqtt_config(payload))
+
+
+@router.post("/mqtt/publish_neighbors")
+async def mqtt_publish_neighbors() -> dict[str, Any]:
+    return await _relay_upstream(lambda c: c.publish_neighbors())
